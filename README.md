@@ -176,7 +176,7 @@ copyrighted text is reproduced anywhere in the app or its content.
 
 ## License
 
-No license has been chosen for this repository yet. Until one is added, all rights are reserved by the author.
+[MIT](LICENSE)
 
 ## Development note
 

@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+/* Self-hosted type system — no remote font requests. */
+@import "@fontsource/fraunces/600.css";
+@import "@fontsource/fraunces/600-italic.css";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+/* ============================================================
+   Design tokens — Holdem Lab
+   A premium poker study room: charcoal + felt green foundation,
+   ivory content surfaces, restrained brass accents, sparing
+   burgundy for suits/stakes. See docs/design-system.md.
+   ============================================================ */
+@theme {
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Charcoal/midnight — canvas & surfaces (neutral, slightly warm, never blue-grey) */
+  --color-ink-950: oklch(15% 0.010 145);
+  --color-ink-900: oklch(18% 0.011 145);
+  --color-ink-850: oklch(21% 0.012 145);
+  --color-ink-800: oklch(24% 0.013 145);
+  --color-ink-700: oklch(29% 0.014 145);
+  --color-ink-600: oklch(36% 0.015 145);
+  --color-ink-500: oklch(46% 0.016 145);
+
+  /* Warm neutral text (never blue-grey) */
+  --color-sand-100: oklch(96% 0.012 90);
+  --color-sand-200: oklch(90% 0.016 85);
+  --color-sand-300: oklch(80% 0.020 80);
+  --color-sand-400: oklch(68% 0.022 75);
+  --color-sand-500: oklch(56% 0.020 75);
+  --color-sand-600: oklch(45% 0.016 75);
+
+  /* Felt green — primary brand colour */
+  --color-felt-900: oklch(22% 0.045 155);
+  --color-felt-800: oklch(27% 0.055 155);
+  --color-felt-700: oklch(33% 0.065 155);
+  --color-felt-600: oklch(40% 0.075 155);
+  --color-felt-500: oklch(48% 0.090 155);
+  --color-felt-400: oklch(58% 0.100 155);
+  --color-felt-300: oklch(72% 0.100 155);
+  --color-felt-200: oklch(85% 0.080 155);
+
+  /* Ivory — cards & important content surfaces */
+  --color-ivory-100: oklch(97% 0.020 85);
+  --color-ivory-200: oklch(93% 0.028 85);
+  --color-ivory-300: oklch(87% 0.035 82);
+
+  /* Brass/gold — restrained accent for merit, emphasis, currency */
+  --color-brass-300: oklch(84% 0.070 80);
+  --color-brass-400: oklch(74% 0.090 75);
+  --color-brass-500: oklch(65% 0.100 70);
+  --color-brass-600: oklch(54% 0.090 65);
+
+  /* Burgundy — suits, warnings, high-stakes moments (sparing) */
+  --color-burgundy-300: oklch(70% 0.100 20);
+  --color-burgundy-400: oklch(58% 0.130 20);
+  --color-burgundy-500: oklch(48% 0.140 20);
+  --color-burgundy-600: oklch(38% 0.120 20);
+
+  /* Radius scale — deliberately small, three steps used consistently */
+  --radius-xs: 0.3125rem;   /* 5px  — chips, tags, tiny controls */
+  --radius-sm: 0.5rem;      /* 8px  — buttons, inputs, card corners */
+  --radius-md: 0.75rem;     /* 12px — lesson rows, panels */
+  --radius-lg: 1.125rem;    /* 18px — primary surfaces (hero, table rail) */
+
+  /* Elevation — offset + blur, never a flat colored halo */
+  --shadow-card: 0 1px 2px oklch(0% 0 0 / 0.35), 0 1px 1px oklch(0% 0 0 / 0.2);
+  --shadow-panel: 0 8px 24px -8px oklch(0% 0 0 / 0.55), 0 2px 6px -1px oklch(0% 0 0 / 0.35);
+  --shadow-raised: 0 16px 40px -12px oklch(0% 0 0 / 0.6), 0 4px 10px -2px oklch(0% 0 0 / 0.4);
+  --shadow-felt-glow: 0 0 0 1px oklch(48% 0.09 155 / 0.4), 0 6px 20px -6px oklch(48% 0.09 155 / 0.5);
+
+  /* Motion */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 220ms;
+  --duration-slow: 420ms;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-ink-950);
+  background-image:
+    radial-gradient(ellipse 1200px 700px at 15% -10%, oklch(27% 0.05 155 / 0.16), transparent 60%),
+    radial-gradient(ellipse 900px 600px at 100% 0%, oklch(30% 0.02 145 / 0.5), transparent 55%);
+  background-attachment: fixed;
+  color: var(--color-sand-200);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+/* Numerals used for chips, odds, EV, timers always align on a tabular grid. */
+.tabular,
+.font-mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Browser surfaces carry the palette too. */
+::selection {
+  background: var(--color-felt-600);
+  color: var(--color-ivory-100);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brass-400);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-500);
+  background-clip: padding-box;
+}
+
+/* Very subtle felt texture, used sparingly behind gameplay surfaces only. */
+.felt-texture {
+  background-image:
+    radial-gradient(oklch(100% 0 0 / 0.025) 1px, transparent 1px);
+  background-size: 3px 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

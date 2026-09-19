@@ -23,6 +23,13 @@ export default function LessonView() {
   const completedLessons = useProgressStore((s) => s.completedLessons);
   const [selected, setSelected] = useState<number | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const lessonKey = found ? `${found.level.id}/${found.lesson.id}` : null;
+  const [quizLessonKey, setQuizLessonKey] = useState(lessonKey);
+  if (lessonKey !== quizLessonKey) {
+    setQuizLessonKey(lessonKey);
+    setSelected(null);
+    setSubmitted(false);
+  }
 
   const nextLesson = useMemo(() => {
     if (!found) return null;

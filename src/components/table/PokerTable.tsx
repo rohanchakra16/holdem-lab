@@ -1,10 +1,11 @@
-import { useTableStore } from '../../state/tableStore';
+import { isSessionOver, useTableStore } from '../../state/tableStore';
 import { CardRow } from '../common/CardView';
 import { Chip } from '../common/Chip';
 import { Seat } from './Seat';
 import { MobileTable } from './MobileTable';
 import { ActionBar } from './ActionBar';
 import { CoachPanel } from './CoachPanel';
+import { ShowdownBanner } from './ShowdownBanner';
 import { Badge } from '../common/ui';
 import { Icon } from '../common/NavIcons';
 import { computeLegalActionsForPlayer } from '../../engine/legalActions';
@@ -25,6 +26,9 @@ export default function PokerTable() {
   const togglePause = useTableStore((s) => s.togglePause);
   const dismissFeedback = useTableStore((s) => s.dismissFeedback);
   const endSession = useTableStore((s) => s.endSession);
+  const advisorSuggestion = useTableStore((s) => s.advisorSuggestion);
+  const advisorRevealed = useTableStore((s) => s.advisorRevealed);
+  const revealAdvisor = useTableStore((s) => s.revealAdvisor);
 
   if (!engine) return null;
   const state = engine.getState();
@@ -32,7 +36,8 @@ export default function PokerTable() {
   const isHeroTurn = state.actingSeat === hero.seat && !state.isHandComplete;
   const legal = isHeroTurn ? computeLegalActionsForPlayer(state, hero) : null;
   const pot = getTotalPot(state);
-  const sessionOver = state.players.filter((p) => p.isActive).length < 2;
+  const sessionOver = isSessionOver(state);
+  const heroBusted = !hero.isActive;
 
   return (
     <div className="flex h-full flex-col">
@@ -56,7 +61,7 @@ export default function PokerTable() {
       </div>
 
       <div className="hidden lg:block">
-        <div className="relative mx-auto my-5 aspect-[16/9] w-[95%] max-w-4xl shrink-0 rounded-[999px] border-[12px] border-[#3a2a1a] bg-gradient-to-b from-felt-800 to-felt-900 shadow-[var(--shadow-raised)] felt-texture">
+        <div className="relative mx-auto mt-5 aspect-[16/9] w-[95%] max-w-4xl shrink-0 rounded-[999px] border-[12px] border-[#3a2a1a] bg-gradient-to-b from-felt-800 to-felt-900 shadow-[var(--shadow-raised)] felt-texture">
           <div className="pointer-events-none absolute inset-0 rounded-[999px] shadow-[inset_0_0_60px_20px_rgba(0,0,0,0.35)]" />
           <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2.5">
             <Chip value={pot} size="md" />
@@ -67,6 +72,12 @@ export default function PokerTable() {
             <Seat key={p.id} state={state} player={p} heroSeat={hero.seat} />
           ))}
         </div>
+        <div className="mx-auto flex w-[95%] max-w-4xl justify-end pt-2.5">
+          <div className="flex items-center gap-2.5 rounded-[var(--radius-sm)] bg-ink-900/95 px-3.5 py-2.5 shadow-[var(--shadow-card)] ring-1 ring-black/30">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-sand-500">Your hand</span>
+            <CardRow cards={hero.holeCards} size="lg" />
+          </div>
+        </div>
       </div>
 
       <div className="lg:hidden">
@@ -74,11 +85,12 @@ export default function PokerTable() {
       </div>
 
       <div className="mx-auto w-full max-w-4xl px-3 pb-5 flex flex-col gap-3 sm:w-[95%] sm:px-0">
+        {state.isHandComplete && <ShowdownBanner state={state} />}
         {pendingFeedback && <CoachPanel feedback={pendingFeedback} onDismiss={dismissFeedback} />}
 
         {sessionOver ? (
           <div className="rounded-[var(--radius-md)] bg-brass-900/20 ring-1 ring-brass-600/30 p-4 text-center text-brass-200">
-            Session over — only one player has chips remaining.
+            {heroBusted ? "Session over — you're out of chips." : 'Session over — only one player has chips remaining.'}
             <div className="mt-2">
               <button onClick={endSession} className="rounded-[var(--radius-sm)] bg-brass-500 px-4 py-2 text-[13px] font-semibold text-ink-950 hover:bg-brass-400">
                 Back to setup
@@ -92,6 +104,10 @@ export default function PokerTable() {
             currentBet={state.currentBet}
             effectiveStack={hero.stack + hero.committedThisStreet}
             onAct={(action, reasoning) => humanAct(action, reasoning)}
+            advisorEnabled={settings.advisorEnabled}
+            advisorRevealed={advisorRevealed}
+            advisorSuggestion={advisorSuggestion}
+            onRevealAdvisor={revealAdvisor}
           />
         ) : handOverAwaitingContinue && settings.mode === 'guided' ? (
           <div className="flex justify-center">

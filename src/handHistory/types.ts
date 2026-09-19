@@ -1,5 +1,6 @@
 import { Card } from '../engine/cards';
 import { ActionRecord, ShowdownResult, TableConfig } from '../engine/types';
+import { HeroDecisionRecord } from '../training/coach';
 
 export interface HandHistoryPlayerSnapshot {
   id: string;
@@ -23,6 +24,8 @@ export interface HandHistoryEntry {
   showdownResults: ShowdownResult[] | null;
   heroId: string;
   heroNetResult: number;
+  /** Every hero decision's pot-odds/equity/EV numbers, recorded regardless of the live coaching setting used during play. */
+  heroDecisions: HeroDecisionRecord[];
   notes: string;
   mode: 'guided' | 'free';
 }

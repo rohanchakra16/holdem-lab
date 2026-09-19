@@ -110,7 +110,21 @@ function SetupForm() {
           </div>
         </div>
 
-        <div className="mt-6 flex justify-end">
+        <label className="mt-5 flex items-start gap-2.5 rounded-[var(--radius-sm)] bg-ink-800/50 px-3 py-2.5 text-[12.5px] text-sand-400">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={settings.advisorEnabled}
+            onChange={(e) => update('advisorEnabled', e.target.checked)}
+          />
+          <span>
+            <span className="font-medium text-sand-300">Enable move advisor</span> — lets you reveal a heuristic suggested action before
+            you decide, on any turn you choose to look. Off by default; you always have to click to reveal it, so it's never shown
+            automatically.
+          </span>
+        </label>
+
+        <div className="mt-4 flex justify-end">
           <Button variant="primary" onClick={() => startSession(settings)}>
             Start Session
           </Button>

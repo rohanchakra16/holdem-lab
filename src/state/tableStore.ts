@@ -3,7 +3,7 @@ import { HandEngine, PlayerSetup, getTotalPot } from '../engine/engine';
 import { BotPersonality, PlayerAction, TableState } from '../engine/types';
 import { buildObservation, decideBotAction } from '../bots/botDecision';
 import { mulberry32, randomSeed } from '../engine/rng';
-import { buildCoachFeedback, CoachFeedback } from '../training/coach';
+import { buildCoachFeedback, CoachFeedback, HeroDecisionRecord, toHeroDecisionRecord, suggestAction, ActionSuggestion } from '../training/coach';
 import { saveHand } from '../handHistory/handHistoryStore';
 import { HandHistoryEntry } from '../handHistory/types';
 import { useProgressStore } from './progressStore';
@@ -20,6 +20,8 @@ export interface TableSettings {
   mode: GameMode;
   coachingLevel: CoachingLevel;
   gameSpeedMs: number; // delay between bot actions
+  /** Opt-in only: lets the player reveal a heuristic suggested move before acting. Off by default. */
+  advisorEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: TableSettings = {
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: TableSettings = {
   mode: 'guided',
   coachingLevel: 'full',
   gameSpeedMs: 900,
+  advisorEnabled: false,
 };
 
 interface TableStoreState {
@@ -42,6 +45,9 @@ interface TableStoreState {
   pendingFeedback: CoachFeedback | null;
   handOverAwaitingContinue: boolean;
   botTimer: ReturnType<typeof setTimeout> | null;
+  currentHeroDecisions: HeroDecisionRecord[];
+  advisorSuggestion: ActionSuggestion | null;
+  advisorRevealed: boolean;
 
   startSession: (settings: TableSettings) => void;
   updateSettings: (partial: Partial<TableSettings>) => void;
@@ -49,11 +55,19 @@ interface TableStoreState {
   dealNextHand: () => void;
   togglePause: () => void;
   dismissFeedback: () => void;
+  revealAdvisor: () => void;
   endSession: () => void;
   getState: () => TableState | null;
 }
 
 const HERO_ID = 'human';
+
+/** The session is over once the hero busts out, even if bots still have chips to play with each other. */
+export function isSessionOver(state: TableState): boolean {
+  const hero = state.players.find((p) => p.id === HERO_ID);
+  if (!hero || !hero.isActive) return true;
+  return state.players.filter((p) => p.isActive).length < 2;
+}
 
 function makePlayerSetups(settings: TableSettings): PlayerSetup[] {
   const setups: PlayerSetup[] = [{ id: HERO_ID, name: 'You', isHuman: true }];
@@ -68,7 +82,7 @@ function makePlayerSetups(settings: TableSettings): PlayerSetup[] {
   return setups;
 }
 
-function recordHandHistory(engine: HandEngine, settings: TableSettings) {
+function recordHandHistory(engine: HandEngine, settings: TableSettings, heroDecisions: HeroDecisionRecord[]) {
   const state = engine.getState();
   if (!state.isHandComplete) return;
   const heroResult = state.showdownResults?.find((r) => r.playerId === HERO_ID);
@@ -94,6 +108,7 @@ function recordHandHistory(engine: HandEngine, settings: TableSettings) {
     showdownResults: state.showdownResults,
     heroId: HERO_ID,
     heroNetResult: heroNet,
+    heroDecisions,
     notes: '',
     mode: settings.mode,
   };
@@ -109,6 +124,9 @@ export const useTableStore = create<TableStoreState>((set, get) => ({
   pendingFeedback: null,
   handOverAwaitingContinue: false,
   botTimer: null,
+  currentHeroDecisions: [],
+  advisorSuggestion: null,
+  advisorRevealed: false,
 
   getState: () => get().engine?.getState() ?? null,
 
@@ -118,7 +136,17 @@ export const useTableStore = create<TableStoreState>((set, get) => ({
     const config = { smallBlind: settings.smallBlind, bigBlind: settings.bigBlind, startingStack: settings.startingStack * settings.bigBlind };
     const engine = new HandEngine(config, makePlayerSetups(settings), randomSeed());
     engine.startHand();
-    set({ engine, settings, version: get().version + 1, isPaused: false, pendingFeedback: null, handOverAwaitingContinue: false });
+    set({
+      engine,
+      settings,
+      version: get().version + 1,
+      isPaused: false,
+      pendingFeedback: null,
+      handOverAwaitingContinue: false,
+      currentHeroDecisions: [],
+      advisorSuggestion: null,
+      advisorRevealed: false,
+    });
     scheduleNext(get, set);
   },
 
@@ -131,12 +159,20 @@ export const useTableStore = create<TableStoreState>((set, get) => ({
     const player = state.players.find((p) => p.id === HERO_ID)!;
     const { settings } = get();
 
-    let feedback: CoachFeedback | null = null;
-    if (settings.coachingLevel !== 'none') {
-      feedback = buildCoachFeedback(state, player, action, randomSeed());
-      if (settings.coachingLevel === 'important' && feedback && !feedback.isImportantDecision && feedback.isLegal) {
-        feedback = null;
-      }
+    // Always compute feedback for permanent hand-history recording, regardless of the live coaching setting.
+    const fullFeedback = buildCoachFeedback(state, player, action, randomSeed());
+    const decisionRecord = toHeroDecisionRecord(state.street, action, fullFeedback);
+
+    let displayFeedback: CoachFeedback | null = fullFeedback;
+    if (settings.coachingLevel === 'none') {
+      displayFeedback = null;
+    } else if (settings.coachingLevel === 'important' && !fullFeedback.isImportantDecision && fullFeedback.isLegal) {
+      displayFeedback = null;
+    }
+
+    if (!fullFeedback.isLegal) {
+      set({ pendingFeedback: fullFeedback });
+      return;
     }
 
     try {
@@ -162,25 +198,41 @@ export const useTableStore = create<TableStoreState>((set, get) => ({
       return;
     }
 
+    const heroDecisions = [...get().currentHeroDecisions, decisionRecord];
+
     const afterState = engine.getState();
     if (afterState.isHandComplete) {
-      recordHandHistory(engine, settings);
+      recordHandHistory(engine, settings, heroDecisions);
       const heroFinal = afterState.players.find((p) => p.id === HERO_ID)!;
       const heroDelta = afterState.showdownResults?.find((r) => r.playerId === HERO_ID)?.amountWon ?? 0;
       useProgressStore.getState().recordChipResult(heroDelta, heroFinal.stack);
     }
 
-    set({ version: get().version + 1, pendingFeedback: feedback, awaitingHumanAction: false, handOverAwaitingContinue: afterState.isHandComplete });
+    set({
+      version: get().version + 1,
+      pendingFeedback: displayFeedback,
+      awaitingHumanAction: false,
+      handOverAwaitingContinue: afterState.isHandComplete,
+      currentHeroDecisions: afterState.isHandComplete ? [] : heroDecisions,
+      advisorSuggestion: null,
+      advisorRevealed: false,
+    });
     scheduleNext(get, set);
   },
 
   dealNextHand: () => {
     const { engine } = get();
     if (!engine) return;
-    const active = engine.getState().players.filter((p) => p.isActive).length;
-    if (active < 2) return;
+    if (isSessionOver(engine.getState())) return;
     engine.startHand();
-    set({ version: get().version + 1, pendingFeedback: null, handOverAwaitingContinue: false });
+    set({
+      version: get().version + 1,
+      pendingFeedback: null,
+      handOverAwaitingContinue: false,
+      currentHeroDecisions: [],
+      advisorSuggestion: null,
+      advisorRevealed: false,
+    });
     scheduleNext(get, set);
   },
 
@@ -197,10 +249,21 @@ export const useTableStore = create<TableStoreState>((set, get) => ({
 
   dismissFeedback: () => set({ pendingFeedback: null }),
 
+  revealAdvisor: () => {
+    const { engine, settings } = get();
+    if (!engine || !settings.advisorEnabled) return;
+    const state = engine.getState();
+    if (state.isHandComplete || state.actingSeat === null) return;
+    const player = state.players.find((p) => p.id === HERO_ID)!;
+    if (player.seat !== state.actingSeat) return;
+    const suggestion = suggestAction(state, player, randomSeed());
+    set({ advisorSuggestion: suggestion, advisorRevealed: true });
+  },
+
   endSession: () => {
     const t = get().botTimer;
     if (t) clearTimeout(t);
-    set({ engine: null, botTimer: null, pendingFeedback: null, handOverAwaitingContinue: false });
+    set({ engine: null, botTimer: null, pendingFeedback: null, handOverAwaitingContinue: false, currentHeroDecisions: [] });
   },
 }));
 
@@ -212,13 +275,19 @@ function scheduleNext(get: () => TableStoreState, set: (partial: Partial<TableSt
   if (state.isHandComplete) {
     set({ handOverAwaitingContinue: true });
     if (settings.mode === 'free') {
-      const active = state.players.filter((p) => p.isActive).length;
-      if (active < 2) return;
+      if (isSessionOver(state)) return;
       const timer = setTimeout(() => {
         const s = get();
         if (!s.engine || s.isPaused) return;
         s.engine.startHand();
-        set({ version: get().version + 1, pendingFeedback: null, handOverAwaitingContinue: false });
+        set({
+          version: get().version + 1,
+          pendingFeedback: null,
+          handOverAwaitingContinue: false,
+          currentHeroDecisions: [],
+          advisorSuggestion: null,
+          advisorRevealed: false,
+        });
         scheduleNext(get, set);
       }, Math.max(600, settings.gameSpeedMs));
       set({ botTimer: timer });
@@ -230,7 +299,7 @@ function scheduleNext(get: () => TableStoreState, set: (partial: Partial<TableSt
   if (actingSeat === null) return;
   const actor = state.players.find((p) => p.seat === actingSeat)!;
   if (actor.isHuman) {
-    set({ awaitingHumanAction: true });
+    set({ awaitingHumanAction: true, advisorSuggestion: null, advisorRevealed: false });
     return;
   }
 
@@ -246,8 +315,8 @@ function scheduleNext(get: () => TableStoreState, set: (partial: Partial<TableSt
     const action = decideBotAction(obs);
     s.engine.applyAction(bot.id, action);
     const after = s.engine.getState();
-    if (after.isHandComplete) recordHandHistory(s.engine, s.settings);
-    set({ version: get().version + 1 });
+    if (after.isHandComplete) recordHandHistory(s.engine, s.settings, s.currentHeroDecisions);
+    set({ version: get().version + 1, currentHeroDecisions: after.isHandComplete ? [] : s.currentHeroDecisions });
     scheduleNext(get, set);
   }, settings.gameSpeedMs);
   set({ botTimer: timer });

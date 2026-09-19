@@ -1,10 +1,39 @@
 import { useMemo, useState } from 'react';
-import { clearHandHistory, filterHands, handToJSON, handToPlainText, loadHandHistory } from '../handHistory/handHistoryStore';
+import { clearHandHistory, filterHands, findBiggestMistake, handToJSON, handToPlainText, loadHandHistory } from '../handHistory/handHistoryStore';
 import { HandHistoryEntry } from '../handHistory/types';
 import { Badge, Button, Panel } from '../components/common/ui';
 import { PageHeading } from '../components/common/PageHeading';
 import { CardRow } from '../components/common/CardView';
 import { handCategoryName } from '../engine/handEvaluator';
+import type { HeroDecisionRecord } from '../training/coach';
+
+function assessmentTone(d: HeroDecisionRecord): 'good' | 'bad' | 'neutral' {
+  if (d.action.type === 'fold') return 'neutral';
+  if (d.evOfCalling === null) return 'neutral';
+  return d.evOfCalling >= 0 ? 'good' : 'bad';
+}
+
+function DecisionRow({ decision, isMistake }: { decision: HeroDecisionRecord; isMistake: boolean }) {
+  const req = decision.requiredEquity !== null ? `${(decision.requiredEquity * 100).toFixed(0)}% required` : 'no bet to call';
+  const est = decision.estimatedEquity !== null ? `${(decision.estimatedEquity * 100).toFixed(0)}% estimated` : 'n/a';
+  return (
+    <div className={`rounded-[var(--radius-sm)] px-3 py-2 text-xs ${isMistake ? 'bg-burgundy-600/15 ring-1 ring-burgundy-500/30' : 'bg-ink-800/50'}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="capitalize text-sand-300">
+          {decision.street} · {decision.action.type}
+          {decision.action.amount !== undefined ? ` ${decision.action.amount}` : ''}
+        </span>
+        <Badge tone={assessmentTone(decision)}>
+          {decision.evOfCalling !== null ? `EV ${decision.evOfCalling >= 0 ? '+' : ''}${decision.evOfCalling.toFixed(1)}` : '—'}
+        </Badge>
+      </div>
+      <div className="mt-1 text-sand-500">
+        {req} · {est}
+        {isMistake && <span className="ml-1.5 text-burgundy-300">· biggest likely mistake this hand</span>}
+      </div>
+    </div>
+  );
+}
 
 function copyToClipboard(text: string) {
   navigator.clipboard?.writeText(text).catch(() => {});
@@ -19,6 +48,7 @@ function HandDetail({ hand }: { hand: HandHistoryEntry }) {
   const actionsForStreet = hand.actionHistory.filter((a) => a.street === streets[streetIndex]);
 
   const hero = hand.players.find((p) => p.id === hand.heroId);
+  const mistake = findBiggestMistake(hand);
 
   return (
     <Panel
@@ -85,6 +115,17 @@ function HandDetail({ hand }: { hand: HandHistoryEntry }) {
                 {r.playerId}: {r.handValue ? handCategoryName(r.handValue.category) : 'uncontested'} — won {r.amountWon}
               </div>
             ))}
+        </div>
+      )}
+
+      {(hand.heroDecisions ?? []).length > 0 && (
+        <div className="mb-3">
+          <div className="text-xs font-semibold text-sand-400 mb-1.5">Hand analysis</div>
+          <div className="flex flex-col gap-1.5">
+            {(hand.heroDecisions ?? []).map((d, i) => (
+              <DecisionRow key={i} decision={d} isMistake={mistake === d} />
+            ))}
+          </div>
         </div>
       )}
 

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { LegalActions, PlayerAction } from '../../engine/types';
 import { Button } from '../common/ui';
+import { Icon } from '../common/NavIcons';
 import { betSizeFromPreset } from '../../math/potOdds';
+import type { ActionSuggestion } from '../../training/coach';
 
 interface Props {
   legal: LegalActions;
@@ -9,9 +11,23 @@ interface Props {
   currentBet: number;
   effectiveStack: number;
   onAct: (action: PlayerAction, reasoning: string) => void;
+  advisorEnabled?: boolean;
+  advisorRevealed?: boolean;
+  advisorSuggestion?: ActionSuggestion | null;
+  onRevealAdvisor?: () => void;
 }
 
-export function ActionBar({ legal, pot, currentBet, effectiveStack, onAct }: Props) {
+export function ActionBar({
+  legal,
+  pot,
+  currentBet,
+  effectiveStack,
+  onAct,
+  advisorEnabled = false,
+  advisorRevealed = false,
+  advisorSuggestion = null,
+  onRevealAdvisor,
+}: Props) {
   const [customAmount, setCustomAmount] = useState<number>(legal.minRaiseTo);
   const [reasoning, setReasoning] = useState('');
   const [showReasoning, setShowReasoning] = useState(false);
@@ -93,6 +109,30 @@ export function ActionBar({ legal, pot, currentBet, effectiveStack, onAct }: Pro
 
   return (
     <div className="rounded-[var(--radius-md)] bg-ink-850 p-4">
+      {advisorEnabled && (
+        <div className="mb-3">
+          {!advisorRevealed ? (
+            <button
+              onClick={onRevealAdvisor}
+              className="flex w-full items-center justify-center gap-1.5 rounded-[var(--radius-sm)] bg-brass-500/10 px-3 py-2 text-[12.5px] font-medium text-brass-400 ring-1 ring-brass-500/25 hover:bg-brass-500/20"
+            >
+              <Icon name="reference" size={14} />
+              Reveal suggested move (heuristic)
+            </button>
+          ) : advisorSuggestion ? (
+            <div className="rounded-[var(--radius-sm)] bg-brass-500/10 p-3 ring-1 ring-brass-500/25">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brass-400">
+                <Icon name="reference" size={13} />
+                Suggested: {advisorSuggestion.label}
+              </div>
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-sand-300">{advisorSuggestion.reasoning}</p>
+              <p className="mt-1.5 text-[10.5px] text-sand-600">
+                A simple pot-odds/equity heuristic, not a solver — it can't see implied odds, opponent tendencies, or multi-street plans.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      )}
       <div className="flex items-center justify-between mb-3">
         <div className="text-[11.5px] text-sand-600">
           Keyboard: <kbd className="tabular rounded bg-ink-800 px-1">F</kbd> fold · <kbd className="rounded bg-ink-800 px-1">C</kbd> check/call ·{' '}

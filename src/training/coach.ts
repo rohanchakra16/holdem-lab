@@ -1,6 +1,6 @@
-import { Player, PlayerAction, TableState } from '../engine/types';
+import { Player, PlayerAction, Street, TableState } from '../engine/types';
 import { computeLegalActionsForPlayer } from '../engine/legalActions';
-import { requiredEquityToCall, stackToPotRatio } from '../math/potOdds';
+import { requiredEquityToCall, stackToPotRatio, betSizeFromPreset } from '../math/potOdds';
 import { evOfCall } from '../math/ev';
 import { equityVsRandomHands } from '../math/equity';
 import { mulberry32 } from '../engine/rng';
@@ -22,6 +22,27 @@ export interface CoachFeedback {
   outcomeNote: string;
 }
 
+/** A hero decision's numbers, recorded permanently into hand history regardless of live coaching settings. */
+export interface HeroDecisionRecord {
+  street: Street;
+  action: PlayerAction;
+  requiredEquity: number | null;
+  estimatedEquity: number | null;
+  evOfCalling: number | null;
+  assessment: string;
+}
+
+interface DecisionMetrics {
+  potBefore: number;
+  callAmount: number;
+  requiredEquity: number | null;
+  estimatedEquity: number | null;
+  evOfCalling: number | null;
+  opponents: number;
+  effectiveStack: number;
+  spr: number;
+}
+
 function positionLabel(state: TableState, player: Player): string {
   const active = state.players.filter((p) => p.isActive && !p.hasFolded);
   const n = active.length;
@@ -34,23 +55,9 @@ function positionLabel(state: TableState, player: Player): string {
   return 'Middle Position';
 }
 
-/**
- * Builds coaching feedback for a human decision using ONLY information
- * available at the time of the decision (current board, no future cards,
- * no opponents' hole cards). Equity is always a simulation-based ESTIMATE
- * vs random remaining hands, clearly labelled as such, not solved
- * range-vs-range equity.
- */
-export function buildCoachFeedback(state: TableState, player: Player, action: PlayerAction, seed: number): CoachFeedback {
+/** The exact-math + simulation-estimate numbers for a decision point, independent of what action is (or will be) taken. */
+function computeDecisionMetrics(state: TableState, player: Player, seed: number): DecisionMetrics {
   const legal = computeLegalActionsForPlayer(state, player);
-  let isLegal = true;
-  switch (action.type) {
-    case 'fold': isLegal = legal.canFold; break;
-    case 'check': isLegal = legal.canCheck; break;
-    case 'call': isLegal = legal.canCall; break;
-    case 'bet': case 'raise': case 'all-in': isLegal = legal.canBetOrRaise; break;
-  }
-
   const potBefore = getTotalPot(state);
   const callAmount = legal.callAmount;
   const requiredEquity = callAmount > 0 ? requiredEquityToCall(potBefore, callAmount) : null;
@@ -73,6 +80,32 @@ export function buildCoachFeedback(state: TableState, player: Player, action: Pl
 
   const effectiveStack = player.stack + player.committedThisStreet;
   const spr = stackToPotRatio(effectiveStack, Math.max(1, potBefore));
+
+  return { potBefore, callAmount, requiredEquity, estimatedEquity, evOfCalling, opponents, effectiveStack, spr };
+}
+
+/**
+ * Builds coaching feedback for a human decision using ONLY information
+ * available at the time of the decision (current board, no future cards,
+ * no opponents' hole cards). Equity is always a simulation-based ESTIMATE
+ * vs random remaining hands, clearly labelled as such, not solved
+ * range-vs-range equity.
+ */
+export function buildCoachFeedback(state: TableState, player: Player, action: PlayerAction, seed: number): CoachFeedback {
+  const legal = computeLegalActionsForPlayer(state, player);
+  let isLegal = true;
+  switch (action.type) {
+    case 'fold': isLegal = legal.canFold; break;
+    case 'check': isLegal = legal.canCheck; break;
+    case 'call': isLegal = legal.canCall; break;
+    case 'bet': case 'raise': case 'all-in': isLegal = legal.canBetOrRaise; break;
+  }
+
+  const { potBefore, callAmount, requiredEquity, estimatedEquity, evOfCalling, opponents, effectiveStack, spr } = computeDecisionMetrics(
+    state,
+    player,
+    seed
+  );
 
   let assessment = '';
   let lesson = '';
@@ -129,3 +162,105 @@ export function buildCoachFeedback(state: TableState, player: Player, action: Pl
     outcomeNote,
   };
 }
+
+/** Converts feedback for whatever action the hero actually took into a permanent hand-history record. */
+export function toHeroDecisionRecord(street: Street, action: PlayerAction, feedback: CoachFeedback): HeroDecisionRecord {
+  return {
+    street,
+    action,
+    requiredEquity: feedback.requiredEquity,
+    estimatedEquity: feedback.estimatedEquity,
+    evOfCalling: feedback.evOfCalling,
+    assessment: feedback.assessment,
+  };
+}
+
+export interface ActionSuggestion {
+  action: PlayerAction;
+  label: string;
+  reasoning: string;
+  requiredEquity: number | null;
+  estimatedEquity: number | null;
+}
+
+/**
+ * A heuristic, opt-in "what would a pot-odds/equity-only approach do here"
+ * suggestion, computed BEFORE the hero acts. This is deliberately simple —
+ * it only ever reasons from required vs. estimated equity, the same two
+ * numbers shown in feedback afterwards — so it never sees anything the
+ * player couldn't also see, and it is explicitly not a solver: it ignores
+ * implied odds, opponent tendencies, and multi-street planning. Off by
+ * default; the player must turn it on.
+ */
+export function suggestAction(state: TableState, player: Player, seed: number): ActionSuggestion {
+  const legal = computeLegalActionsForPlayer(state, player);
+  const { potBefore, requiredEquity, estimatedEquity } = computeDecisionMetrics(state, player, seed);
+  const equity = estimatedEquity ?? 0;
+
+  if (!legal.canCall && !legal.canCheck) {
+    // Only fold is legal (e.g. already all-in elsewhere) — nothing to suggest.
+    return {
+      action: { type: 'fold' },
+      label: 'Fold',
+      reasoning: 'No other legal action is available here.',
+      requiredEquity,
+      estimatedEquity,
+    };
+  }
+
+  if (legal.canCheck) {
+    if (equity >= 0.62 && legal.canBetOrRaise) {
+      const amount = Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, betSizeFromPreset('twoThirds', potBefore, legal.maxRaiseTo)));
+      return {
+        action: { type: 'bet', amount },
+        label: `Bet to ${amount}`,
+        reasoning: `Estimated equity (${(equity * 100).toFixed(0)}%) is strong enough vs this many opponents to bet for value — a two-thirds-pot sizing is a reasonable default.`,
+        requiredEquity,
+        estimatedEquity,
+      };
+    }
+    return {
+      action: { type: 'check' },
+      label: 'Check',
+      reasoning:
+        equity >= 0.62
+          ? 'Equity looks strong, but betting/raising is not available here — checking is the only legal way forward.'
+          : `Estimated equity (${(equity * 100).toFixed(0)}%) isn't clearly ahead enough to build the pot for free — checking keeps it small.`,
+      requiredEquity,
+      estimatedEquity,
+    };
+  }
+
+  // Facing a bet.
+  const required = requiredEquity ?? 0;
+  if (equity < required) {
+    return {
+      action: { type: 'fold' },
+      label: 'Fold',
+      reasoning: `Estimated equity (${(equity * 100).toFixed(0)}%) is below the ${(required * 100).toFixed(0)}% pot odds require. Only a fold-equity or implied-odds read this simple check can't see would change that.`,
+      requiredEquity,
+      estimatedEquity,
+    };
+  }
+  if (equity > required + 0.2 && legal.canBetOrRaise) {
+    const amount = legal.raiseIsAllInOnly
+      ? legal.maxRaiseTo
+      : Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, state.currentBet + betSizeFromPreset('twoThirds', potBefore, legal.maxRaiseTo)));
+    return {
+      action: legal.raiseIsAllInOnly ? { type: 'all-in' } : { type: 'raise', amount },
+      label: legal.raiseIsAllInOnly ? `All-in ${amount}` : `Raise to ${amount}`,
+      reasoning: `Estimated equity (${(equity * 100).toFixed(0)}%) clears the ${(required * 100).toFixed(0)}% requirement by a wide margin — raising builds the pot with the better hand, though calling is also defensible.`,
+      requiredEquity,
+      estimatedEquity,
+    };
+  }
+  return {
+    action: { type: 'call' },
+    label: 'Call',
+    reasoning: `Estimated equity (${(equity * 100).toFixed(0)}%) clears the ${(required * 100).toFixed(0)}% pot odds require.`,
+    requiredEquity,
+    estimatedEquity,
+  };
+}
+
+export { betSizeFromPreset as _unused_keep_import };
